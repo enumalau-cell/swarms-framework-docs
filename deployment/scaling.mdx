@@ -520,26 +520,47 @@ def check_resources():
     }
 ```
 
-### 5. Use Appropriate Timeouts
+### 5. Use appropriate timeouts
 
-`Agent` itself does not take a `timeout` constructor parameter. Enforce timeouts at the
-execution layer instead, by bounding a future's result when running concurrently:
+Use a wait limit when your service needs to continue while an agent is still
+working. `future.result(timeout=30)` alone does not bound a surrounding
+`with ThreadPoolExecutor(...)` block: leaving that block waits for the worker.
+
+Manage shutdown explicitly in this example. `wait` reports completion without
+catching exceptions raised by the agent. Read a completed future with
+`future.result()` so failures, including the agent's own `TimeoutError`, still
+reach the caller.
 
 ```python
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import ThreadPoolExecutor, wait
+from loguru import logger
+from swarms import Agent
 
 agent = Agent(
     agent_name="Timeout-Agent",
     model_name="claude-sonnet-4-6",
 )
 
-with ThreadPoolExecutor(max_workers=1) as executor:
+executor = ThreadPoolExecutor(max_workers=1)
+try:
     future = executor.submit(agent.run, "Analyze this task")
-    try:
-        result = future.result(timeout=30)  # Set based on expected task duration
-    except TimeoutError:
-        logger.error("Agent run exceeded the 30s timeout")
+    completed, _ = wait([future], timeout=30)
+    if completed:
+        result = future.result()
+    else:
+        logger.warning("30-second wait ended; the agent may still be running")
+finally:
+    executor.shutdown(wait=False, cancel_futures=True)
 ```
+
+`shutdown(wait=False)` lets the calling code continue. It does not stop an
+already running thread, and Python still waits for that thread before exiting.
+`cancel_futures=True` only cancels work that has not started.
+
+Keep the future if you need to collect a late result or exception. Do not launch
+an automatic retry or reuse the same agent while this run may still be active.
+For a deadline that actually ends work, configure timeouts in the network clients
+and tools used by the agent, or use a worker process whose lifecycle you control.
 
 ## Related Resources
 
