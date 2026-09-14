@@ -333,24 +333,31 @@ results = balancer.process_tasks(large_task_list)
 
 ### Priority-Based Distribution
 
+Use a unique numeric index to break ties between agents with the same load.
+Without it, Python tries to compare the agent objects when heap entries have equal
+loads, which raises `TypeError` for agents without ordering methods. Keep the index
+when reinserting an agent so later ties are safe too.
+
 ```python
 import heapq
 
 class PriorityLoadBalancer:
     def __init__(self, agents):
         # Track agent load (priority queue)
-        self.agent_load = [(0, agent) for agent in agents]
+        self.agent_load = [
+            (0, index, agent) for index, agent in enumerate(agents)
+        ]
         heapq.heapify(self.agent_load)
     
     def assign_task(self, task, priority=0):
         # Get least loaded agent
-        load, agent = heapq.heappop(self.agent_load)
+        load, index, agent = heapq.heappop(self.agent_load)
         
         # Process task
         result = agent.run(task)
         
         # Update load and re-add to queue
-        heapq.heappush(self.agent_load, (load + 1 - priority, agent))
+        heapq.heappush(self.agent_load, (load + 1 - priority, index, agent))
         
         return result
 ```
